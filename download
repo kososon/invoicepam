@@ -1,0 +1,7 @@
+# Jangan pernah upload data pelanggan / hasil laporan ke GitHub
+Cadangan-Invoice-*.json
+data.json
+laporan/
+*.xlsx
+*.pdf
+*.xml
