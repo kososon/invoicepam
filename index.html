@@ -285,6 +285,9 @@ tr.ytot td{font-weight:800;border-top:1px solid var(--line);background:#f3f7f4}
 @media(max-width:860px){main{min-width:0;overflow-x:hidden}.card{min-width:0}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:860px){.ctx .pill{min-width:0;max-width:100%}.pill select{min-width:0;width:100%;text-overflow:ellipsis}.pill label{flex:none}}
 
+.toast .tact{all:unset;cursor:pointer;display:inline-block;margin-top:8px;padding:6px 12px;border-radius:8px;background:#fff;color:#0f4d2e;font-weight:700}
+@media(max-width:860px){.toast .tact{min-height:36px;display:inline-flex;align-items:center}}
+
 </style>
 </head>
 <body>
@@ -1377,6 +1380,9 @@ const Cloud = {
   user: null, base: 0, last: {}, years: [], offline: false,
   cfg() { return window.FIREBASE_CONFIG || {}; },
   enabled() { const c = this.cfg(); return !!(c.apiKey && c.projectId); },
+  /* Password tidak membedakan huruf besar/kecil; Firebase minimal 6 karakter, jadi yang lebih pendek ditambah "#" di belakang */
+  pw(p) { p = String(p || '').toLowerCase(); return p.length >= 6 ? p : p + '#'.repeat(6 - p.length); },
+  role() { const v = (this.cfg().viewers || ['ptpam']).map(x => String(x).toLowerCase()); return this.user && v.includes(this.user.username) ? 'viewer' : 'admin'; },
   emailOf(u) { return String(u || '').trim().toLowerCase() + '@' + (this.cfg().emailDomain || 'pam-invoice.app'); },
   docsUrl() { return `https://firestore.googleapis.com/v1/projects/${this.cfg().projectId}/databases/(default)/documents`; },
   err(code, fallback) {
@@ -1404,7 +1410,7 @@ const Cloud = {
   async signIn(username, password, remember) {
     username = String(username || '').trim().toLowerCase();
     if (!username || !password) throw new Error('Isi username dan password.');
-    const j = await this.post(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${this.cfg().apiKey}`, { email: this.emailOf(username), password, returnSecureToken: true });
+    const j = await this.post(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${this.cfg().apiKey}`, { email: this.emailOf(username), password: this.pw(password), returnSecureToken: true });
     this.setSession(j, username, remember);
   },
   /* pulihkan sesi dari refresh token tersimpan: true / false / 'offline' */
@@ -1435,11 +1441,11 @@ const Cloud = {
   },
   async changePassword(oldPw, newPw) {
     if (!this.user) throw new Error('Belum masuk.');
-    if (String(newPw).length < 6) throw new Error('Password baru minimal 6 karakter.');
+    if (String(newPw).trim().length < 6) throw new Error('Password baru minimal 6 karakter.');
     const key = this.cfg().apiKey, username = this.user.username;
     // verifikasi password lama (juga menghasilkan token baru yang segar)
-    const j1 = await this.post(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${key}`, { email: this.emailOf(username), password: oldPw, returnSecureToken: true });
-    const j2 = await this.post(`https://identitytoolkit.googleapis.com/v1/accounts:update?key=${key}`, { idToken: j1.idToken, password: newPw, returnSecureToken: true });
+    const j1 = await this.post(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${key}`, { email: this.emailOf(username), password: this.pw(oldPw), returnSecureToken: true });
+    const j2 = await this.post(`https://identitytoolkit.googleapis.com/v1/accounts:update?key=${key}`, { idToken: j1.idToken, password: this.pw(newPw), returnSecureToken: true });
     this.setSession(j2, username, !!localStorage.getItem(AUTH_KEY));
   },
 
@@ -1534,7 +1540,7 @@ const Store = {
     }
   },
   label() {
-    if (this.mode === 'cloud') return { ok: !Cloud.offline && !this.dirty && !this.conflict, text: 'Cloud · ' + (Cloud.user ? Cloud.user.username : '-'), sub: Cloud.cfg().projectId };
+    if (this.mode === 'cloud') return { ok: !Cloud.offline && !this.dirty && !this.conflict, text: 'Cloud · ' + (Cloud.user ? Cloud.user.username : '-') + (this.readOnly ? ' (hanya lihat)' : ''), sub: Cloud.cfg().projectId };
     if (this.mode === 'server') return { ok: true, text: 'Server lokal', sub: this.info.reportDir };
     if (this.mode === 'folder') return this.dir ? { ok: this.dirOk, text: this.dirOk ? 'Folder: ' + this.dir.name : 'Folder perlu diaktifkan', sub: this.dir.name + '/laporan' } : { ok: false, text: 'Belum pilih folder', sub: '' };
     return { ok: false, text: 'Mode browser', sub: 'hasil diunduh' };
@@ -1646,6 +1652,7 @@ function download(name, blob) {
 'use strict';
 /* ====== Aplikasi: state, komponen, tampilan ====== */
 const ICON = {
+  hist: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
   inv: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>',
   kw: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 9v.01M18 15v.01"/></svg>',
   fp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4h8l4 4v12H8z"/><path d="M4 8v12h12"/><path d="m11 13 2 2 4-4"/></svg>',
@@ -1699,7 +1706,7 @@ function normalizeDB(x) {
   const out = Object.assign(d, x);
   const ds = defaultDB().settings;
   out.settings = { company: Object.assign(ds.company, x.settings && x.settings.company), layout: Object.assign(ds.layout, x.settings && x.settings.layout), xml: Object.assign(ds.xml, x.settings && x.settings.xml) };
-  out.buyers = Array.isArray(x.buyers) ? x.buyers : []; out.entries = Array.isArray(x.entries) ? x.entries : []; out.docs = x.docs || {}; out.budget = x.budget && typeof x.budget === 'object' ? x.budget : {};
+  out.buyers = Array.isArray(x.buyers) ? x.buyers : []; out.entries = Array.isArray(x.entries) ? x.entries : []; out.docs = x.docs || {}; out.budget = x.budget && typeof x.budget === 'object' ? x.budget : {}; out.history = Array.isArray(x.history) ? x.history : [];
   const co = out.settings.company;
   if (!co.luasByYear || typeof co.luasByYear !== 'object') co.luasByYear = {};
   if (co.luasKebun > 0 && !Object.keys(co.luasByYear).length) {
@@ -1714,6 +1721,7 @@ function normalizeDB(x) {
 const S = { db: null, tab: 'dash', buyerId: null, ym: null };
 let saveT;
 function save() {
+  if (Store.readOnly) return;
   S.db.updatedAt = Date.now(); clearTimeout(saveT);
   saveT = setTimeout(flushSave, Store.mode === 'cloud' ? 1200 : 300);
 }
@@ -1738,10 +1746,21 @@ function ensureInvoiceNo(buyerId) {
 const monthsWithData = buyerId => new Set(S.db.entries.filter(e => e.buyerId === buyerId).map(e => ymOf(e.date)));
 
 /* ---------- Komponen kecil ---------- */
-function toast(msg, sub, kind) {
+function toast(msg, sub, kind, act) {
   let box = $('.toasts'); if (!box) { box = h('div', { class: 'toasts' }); document.body.append(box); }
-  const t = h('div', { class: 'toast ' + (kind || '') }, msg, sub ? h('small', {}, sub) : null);
-  box.append(t); setTimeout(() => t.remove(), kind === 'err' ? 9000 : 5500);
+  const t = h('div', { class: 'toast ' + (kind || '') }, msg, sub ? h('small', {}, sub) : null,
+    act ? h('button', { class: 'tact', onclick: () => { t.remove(); act.fn(); } }, act.text) : null);
+  box.append(t); setTimeout(() => t.remove(), act ? 14000 : kind === 'err' ? 9000 : 5500);
+}
+/* Hapus yang bisa dibatalkan: simpan salinan data sebelum dihapus, tampilkan tombol Batalkan */
+function undoable(doneMsg, mutate) {
+  const snap = JSON.stringify({ buyers: S.db.buyers, entries: S.db.entries, docs: S.db.docs, history: S.db.history || [] });
+  const prevBuyer = S.buyerId;
+  mutate();
+  toast(doneMsg, 'Salah hapus? Klik Batalkan dalam 14 detik.', 'ok', { text: 'Batalkan', fn: () => {
+    const o = JSON.parse(snap); S.db.buyers = o.buyers; S.db.entries = o.entries; S.db.docs = o.docs; S.db.history = o.history; S.buyerId = prevBuyer;
+    save(); render(); toast('Penghapusan dibatalkan', 'Data dikembalikan.', 'ok');
+  } });
 }
 function modal({ title, body, buttons = [], wide, pv, onClose }) {
   const ov = h('div', { class: 'ov' });
@@ -1890,15 +1909,18 @@ function serverDirModal() {
   });
 }
 
-const TABS = [['dash', 'Dashboard', 'dash', 'Dashboard penjualan'], ['budget', 'Budget', 'budget', 'Budget tonase'], ['invoice', 'Invoice', 'inv', 'Invoice penjualan'], ['kwitansi', 'Kwitansi', 'kw', 'Kwitansi'], ['faktur', 'Faktur Pajak', 'fp', 'Export XML Faktur Pajak'], ['buyers', 'Master Pembeli', 'buyer', 'Master pembeli'], ['settings', 'Pengaturan', 'set', 'Pengaturan']];
+const TABS_ALL = [['dash', 'Dashboard', 'dash', 'Dashboard penjualan'], ['budget', 'Budget', 'budget', 'Budget tonase'], ['invoice', 'Invoice', 'inv', 'Invoice penjualan'], ['kwitansi', 'Kwitansi', 'kw', 'Kwitansi'], ['faktur', 'Faktur Pajak', 'fp', 'Export XML Faktur Pajak'], ['history', 'Riwayat', 'hist', 'Riwayat invoice & kwitansi'], ['buyers', 'Master Pembeli', 'buyer', 'Master pembeli'], ['settings', 'Pengaturan', 'set', 'Pengaturan'], ['account', 'Akun', 'set', 'Akun & keamanan']];
+const VIEWER_TABS = ['dash', 'account'];
+const tabsNow = () => TABS_ALL.filter(t => (Store.readOnly ? VIEWER_TABS.includes(t[0]) : t[0] !== 'account'));
 function render() {
   if (!KEEP.pop) closePop();
   const root = $('#app'); root.innerHTML = ''; root.className = 'app';
   const side = h('aside', { class: 'side' },
     h('div', { class: 'brand' }, h('div', { class: 'logo' }, (S.db.settings.company.singkatan || 'INV').slice(0, 3)), h('div', {}, h('b', {}, 'Sistem Invoice'), h('small', {}, S.db.settings.company.nama))),
-    h('nav', { class: 'nav' }, TABS.map(([k, label, icon]) => h('button', { class: S.tab === k ? 'on' : '', 'aria-current': S.tab === k ? 'page' : null, onclick: () => { S.tab = k; render(); } }, ic(icon), label))),
+    h('nav', { class: 'nav' }, tabsNow().map(([k, label, icon]) => h('button', { class: S.tab === k ? 'on' : '', 'aria-current': S.tab === k ? 'page' : null, onclick: () => { S.tab = k; render(); } }, ic(icon), label))),
     h('div', { class: 'spacer' }), h('div', { class: 'stor', id: 'stor' }));
-  const t = TABS.find(x => x[0] === S.tab);
+  if (!tabsNow().some(x => x[0] === S.tab)) S.tab = 'dash';
+  const t = TABS_ALL.find(x => x[0] === S.tab);
   const showCtx = ['invoice', 'kwitansi', 'faktur'].includes(S.tab);
   const main = h('main', {}, h('div', { class: 'top' }, h('div', {}, h('h1', {}, t[3]), h('div', { class: 'sub' }, subtitle())), showCtx ? ctxBar() : null), view());
   root.append(side, main); updateStor();
@@ -1913,6 +1935,8 @@ function subtitle() {
     faktur: 'Data siap diunggah ke Coretax sebagai faktur pajak keluaran.',
     buyers: 'Tambah, ubah, atau hapus pembeli. Data NPWP/TIN dipakai untuk XML.',
     settings: 'Data perusahaan, margin kertas berkop, dan lokasi penyimpanan.',
+    history: 'Daftar invoice dan kwitansi yang pernah dibuat.',
+    account: 'Ganti password dan keluar dari akun. Akun ini hanya dapat melihat Dashboard.',
   })[S.tab];
 }
 function ctxBar() {
@@ -1925,7 +1949,7 @@ function ctxBar() {
 }
 function view() {
   if (['invoice', 'kwitansi', 'faktur'].includes(S.tab) && !S.db.buyers.length) return h('div', { class: 'empty' }, 'Belum ada pembeli. ', h('button', { class: 'btn primary', onclick: () => { S.tab = 'buyers'; render(); } }, 'Tambah pembeli'));
-  return ({ dash: viewDashboard, budget: viewBudget, invoice: viewInvoice, kwitansi: viewKwitansi, faktur: viewFaktur, buyers: viewBuyers, settings: viewSettings })[S.tab]();
+  return ({ dash: viewDashboard, budget: viewBudget, history: viewHistory, account: () => h('div', {}, accountCard()), invoice: viewInvoice, kwitansi: viewKwitansi, faktur: viewFaktur, buyers: viewBuyers, settings: viewSettings })[S.tab]();
 }
 
 /* ======================= TAB INVOICE ======================= */
@@ -2074,7 +2098,7 @@ function buildDailyTable() {
   else body.append(h('div', { style: 'overflow:auto' }, h('table', { class: 't' }, h('thead', {}, h('tr', {}, ['#', 'Tanggal', 'Berat (Kg)', 'Harga (Rp/Kg)', 'Jumlah (Rp)', ''].map((x, i) => h('th', { class: i >= 4 ? 'r' : i === 0 ? 'c' : '' }, x)))), tb)));
   body.append(h('div', { class: 'row', style: 'margin-top:12px;justify-content:space-between' },
     h('button', { class: 'btn', onclick: addRow }, ic('plus'), 'Tambah baris'),
-    c.ents.length ? h('button', { class: 'btn danger', onclick: () => confirmBox('Hapus semua data bulan ini?', `Semua ${c.ents.length} baris data ${c.b.nama} pada ${ymLabel(S.ym)} akan dihapus.`, 'Hapus', () => { S.db.entries = S.db.entries.filter(e => !(e.buyerId === c.b.id && ymOf(e.date) === S.ym)); save(); buildDailyTable(); refreshAll(); }, true) }, ic('trash'), 'Kosongkan bulan ini') : null));
+    c.ents.length ? h('button', { class: 'btn danger', onclick: () => confirmBox('Hapus semua data bulan ini?', `Semua ${c.ents.length} baris data ${c.b.nama} pada ${ymLabel(S.ym)} akan dihapus.`, 'Hapus', () => { undoable(`Data ${ymLabel(S.ym)} dikosongkan`, () => { S.db.entries = S.db.entries.filter(e => !(e.buyerId === c.b.id && ymOf(e.date) === S.ym)); save(); buildDailyTable(); refreshAll(); }); }, true) }, ic('trash'), 'Kosongkan bulan ini') : null));
 }
 function addRow() {
   const c = cur(); const [a] = monthRange(S.ym);
@@ -2154,7 +2178,7 @@ async function genInvoicePdf() {
   try {
     const bytes = await invoicePdf(invoiceData(cur()));
     if (bytes.tight) toast('Isi invoice sangat padat', 'Kurangi margin atas di Pengaturan bila ada yang terpotong.', 'err');
-    await deliver(`Invoice_${safeName(c.b.nama)}_${S.ym}.pdf`, pdfBlob(bytes), true);
+    await deliver(`Invoice_${safeName(c.b.nama)}_${S.ym}.pdf`, pdfBlob(bytes), true); logHistory('invoice', cur(), 'pdf');
   } catch (e) { console.error(e); toast('Gagal membuat PDF: ' + e.message, '', 'err'); }
 }
 async function genInvoiceXlsx() {
@@ -2162,7 +2186,7 @@ async function genInvoiceXlsx() {
   ensureInvoiceNo(c.b.id); save();
   try {
     const blob = await invoiceXlsx(cur());
-    await deliver(`Invoice_${safeName(c.b.nama)}_${S.ym}.xlsx`, blob, false);
+    await deliver(`Invoice_${safeName(c.b.nama)}_${S.ym}.xlsx`, blob, false); logHistory('invoice', cur(), 'xlsx');
   } catch (e) { console.error(e); toast('Gagal membuat Excel: ' + e.message, '', 'err'); }
 }
 async function invoiceXlsx(c) {
@@ -2191,6 +2215,61 @@ async function invoiceXlsx(c) {
     { name: 'Invoice', cols: [6, 16, 62, 16, 20], rows, rowHeights: rh, showGrid: false, merges: ['A1:E1', 'A2:E2', 'A3:E3'] },
     { name: 'Data Harian', cols: [16, 16, 18, 18], rows: daily },
   ]);
+}
+
+
+/* ======================= RIWAYAT ======================= */
+const HF = { year: 'all', type: 'all', buyer: 'all' };
+function logHistory(type, c, fmt) {
+  const d = S.db; d.history = d.history || [];
+  const t = c.totals, no = type === 'invoice' ? invNoOf(c) : kwNoOf(c);
+  let r = d.history.find(x => x.type === type && x.buyerId === c.b.id && x.ym === S.ym);
+  if (!r) { r = { id: uid(), type, buyerId: c.b.id, ym: S.ym, fmts: [], n: 0 }; d.history.push(r); }
+  Object.assign(r, { buyer: c.b.nama, kode: c.b.kode, no, tgl: dateOf(c), kg: t.totalKg, amount: t.grand, at: Date.now() });
+  r.n = (r.n || 0) + 1; if (!r.fmts.includes(fmt)) r.fmts.push(fmt);
+  const dup = d.history.find(x => x !== r && x.type === type && x.no === no);
+  if (dup) toast('Nomor ' + type + ' sama dengan dokumen lain', `${dup.buyer} · ${ymLabel(dup.ym)} (${no})`, 'err');
+  save();
+}
+function histStatus(r) {
+  const b = S.db.buyers.find(x => x.id === r.buyerId);
+  if (!b) return { t: 'Pembeli dihapus', c: 'warn' };
+  const t = calcTotals(buildRows(entriesFor(S.db, b.id, r.ym)), b);
+  if (Math.round(t.grand) !== Math.round(r.amount)) return { t: 'Data berubah sejak dibuat', c: 'warn' };
+  return { t: 'Sesuai data', c: 'ok' };
+}
+function viewHistory() {
+  const w = h('div'), all = (S.db.history || []).slice().sort((a, b) => b.at - a.at);
+  const years = [...new Set(all.map(r => r.ym.slice(0, 4)))].sort().reverse();
+  const list = all.filter(r => (HF.year === 'all' || r.ym.startsWith(HF.year)) && (HF.type === 'all' || r.type === HF.type) && (HF.buyer === 'all' || r.buyerId === HF.buyer));
+  const dupNo = new Set(all.filter(r => all.some(x => x !== r && x.type === r.type && x.no === r.no)).map(r => r.id));
+  const sel = (label, val, opts, fn) => h('div', { class: 'pill' }, h('label', {}, label), h('select', { 'aria-label': label, onchange: e => { fn(e.target.value); render(); } }, opts.map(([v, t]) => h('option', { value: v, selected: v === val }, t))));
+  w.append(h('div', { class: 'dtool' },
+    sel('Tahun', HF.year, [['all', 'Semua tahun'], ...years.map(y => [y, y])], v => HF.year = v),
+    sel('Jenis', HF.type, [['all', 'Invoice & kwitansi'], ['invoice', 'Invoice'], ['kwitansi', 'Kwitansi']], v => HF.type = v),
+    sel('Pembeli', HF.buyer, [['all', 'Semua pembeli'], ...S.db.buyers.map(b => [b.id, `${b.kode} · ${b.nama}`])], v => HF.buyer = v)));
+  const inv = list.filter(r => r.type === 'invoice');
+  w.append(h('div', { class: 'stats' },
+    h('div', { class: 'stat hero' }, h('small', {}, 'Invoice dibuat'), h('b', {}, String(inv.length))),
+    h('div', { class: 'stat' }, h('small', {}, 'Kwitansi dibuat'), h('b', {}, String(list.length - inv.length))),
+    h('div', { class: 'stat' }, h('small', {}, 'Total nominal invoice'), h('b', {}, 'Rp ' + fmt(inv.reduce((s, r) => s + r.amount, 0)))),
+    h('div', { class: 'stat' }, h('small', {}, 'Total berat invoice'), h('b', {}, fmt(inv.reduce((s, r) => s + r.kg, 0)) + ' Kg'))));
+  const dt = ms => new Date(ms).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const rows = list.map(r => { const st = histStatus(r);
+    return h('tr', {}, h('td', {}, dt(r.at), r.n > 1 ? h('small', { style: 'color:var(--muted)' }, ` · ${r.n}×`) : null),
+      h('td', {}, h('span', { class: 'chip ' + (r.type === 'invoice' ? 'ok' : '') }, r.type === 'invoice' ? 'Invoice' : 'Kwitansi')),
+      h('td', {}, `${r.kode || ''} · ${r.buyer}`), h('td', {}, ymLabel(r.ym)),
+      h('td', {}, r.no, dupNo.has(r.id) ? h('span', { class: 'bad', style: 'font-weight:700' }, ' ⚠ ganda') : null),
+      h('td', {}, longDate(r.tgl)), h('td', { class: 'r' }, fmt(r.kg)), h('td', { class: 'r' }, fmt(r.amount)),
+      h('td', {}, h('span', { class: st.c }, st.t)),
+      h('td', { class: 'r', style: 'white-space:nowrap' },
+        h('button', { class: 'btn sm', disabled: !S.db.buyers.some(b => b.id === r.buyerId), onclick: () => { S.buyerId = r.buyerId; S.ym = r.ym; S.tab = r.type === 'invoice' ? 'invoice' : 'kwitansi'; render(); } }, 'Buka'), ' ',
+        h('button', { class: 'btn sm danger', 'aria-label': 'Hapus catatan', onclick: () => confirmBox('Hapus catatan riwayat?', 'Hanya catatan di daftar ini yang dihapus; data penjualan tidak terpengaruh.', 'Hapus', () => { S.db.history = S.db.history.filter(x => x.id !== r.id); save(); render(); }, true) }, ic('trash')))); });
+  w.append(h('div', { class: 'card' }, h('h2', {}, h('span', {}, `${list.length} catatan`), h('span', { class: 'hint' }, 'dicatat otomatis setiap kali PDF/Excel dibuat')),
+    list.length ? h('div', { style: 'overflow:auto' }, h('table', { class: 't' }, h('thead', {}, h('tr', {}, ['Dibuat', 'Jenis', 'Pembeli', 'Periode', 'Nomor', 'Tgl dokumen', 'Berat (Kg)', 'Nominal (Rp)', 'Status', ''].map((x, i) => h('th', { class: i === 6 || i === 7 || i === 9 ? 'r' : '' }, x)))), h('tbody', {}, rows)))
+      : h('div', { class: 'empty' }, 'Belum ada riwayat. Riwayat tercatat saat Anda membuat PDF/Excel invoice atau PDF kwitansi.'),
+    h('small', { style: 'display:block;margin-top:8px;color:var(--muted)' }, 'Satu catatan per pembeli per bulan; membuat ulang hanya memperbarui catatan. "Data berubah sejak dibuat" berarti nominal sekarang berbeda dari saat dokumen dibuat.')));
+  return w;
 }
 
 /* ======================= TAB KWITANSI ======================= */
@@ -2238,7 +2317,7 @@ async function genKwitansi() {
   try {
     const bytes = await kwitansiPdf(d);
     if (bytes.overflow) toast('Kwitansi melebihi ½ F4', 'Kurangi ruang tanda tangan di Pengaturan.', 'err');
-    await deliver(`Kwitansi_${safeName(c.b.nama)}_${S.ym}.pdf`, pdfBlob(bytes), true);
+    await deliver(`Kwitansi_${safeName(c.b.nama)}_${S.ym}.pdf`, pdfBlob(bytes), true); logHistory('kwitansi', cur(), 'pdf');
   } catch (e) { console.error(e); toast('Gagal membuat PDF: ' + e.message, '', 'err'); }
 }
 
@@ -2300,10 +2379,12 @@ function viewBuyers() {
 }
 function delBuyer(b) {
   const n = S.db.entries.filter(e => e.buyerId === b.id).length;
-  confirmBox('Hapus pembeli?', `${b.nama} akan dihapus${n ? ` beserta ${n} baris data harian miliknya` : ''}. Tindakan ini tidak dapat dibatalkan.`, 'Hapus', () => {
-    S.db.buyers = S.db.buyers.filter(x => x !== b); S.db.entries = S.db.entries.filter(e => e.buyerId !== b.id);
-    Object.keys(S.db.docs).forEach(k => { if (k.startsWith(b.id + '|')) delete S.db.docs[k]; });
-    if (S.buyerId === b.id) S.buyerId = S.db.buyers[0]?.id || null; save(); render();
+  confirmBox('Hapus pembeli?', `${b.nama} akan dihapus${n ? ` beserta ${n} baris data harian miliknya` : ''}. Setelah dihapus Anda masih bisa membatalkannya beberapa detik.`, 'Hapus', () => {
+    undoable(`${b.nama} dihapus`, () => {
+      S.db.buyers = S.db.buyers.filter(x => x !== b); S.db.entries = S.db.entries.filter(e => e.buyerId !== b.id);
+      Object.keys(S.db.docs).forEach(k => { if (k.startsWith(b.id + '|')) delete S.db.docs[k]; });
+      if (S.buyerId === b.id) S.buyerId = S.db.buyers[0]?.id || null; save(); render();
+    });
   }, true);
 }
 function buyerForm(b) {
@@ -2396,13 +2477,13 @@ function accountCard() {
   const msg = h('div', { class: 'lgerr', role: 'status' });
   const btn = h('button', { class: 'btn primary', type: 'submit' }, 'Ubah password');
   const form = h('form', { class: 'form', novalidate: true },
-    field('Password lama', o, null, 'full'), field('Password baru', n, 'Minimal 6 karakter. Gunakan kombinasi huruf dan angka agar lebih aman.'), field('Ulangi password baru', n2),
+    field('Password lama', o, null, 'full'), field('Password baru', n, 'Huruf besar/kecil tidak dibedakan. Gunakan kombinasi huruf dan angka (8 karakter atau lebih) agar lebih aman.'), field('Ulangi password baru', n2),
     h('div', { class: 'full' }, msg), h('div', { class: 'full row' }, btn));
   form.addEventListener('submit', async e => {
     e.preventDefault(); msg.className = 'lgerr';
     if (!o.value || !n.value) { msg.textContent = 'Isi password lama dan password baru.'; return; }
-    if (n.value !== n2.value) { msg.textContent = 'Ulangi password baru tidak sama.'; return; }
-    if (n.value === o.value) { msg.textContent = 'Password baru sama dengan password lama.'; return; }
+    if (n.value.toLowerCase() !== n2.value.toLowerCase()) { msg.textContent = 'Ulangi password baru tidak sama.'; return; }
+    if (n.value.toLowerCase() === o.value.toLowerCase()) { msg.textContent = 'Password baru sama dengan password lama.'; return; }
     btn.disabled = true; btn.textContent = 'Menyimpan…';
     try { await Cloud.changePassword(o.value, n.value); o.value = n.value = n2.value = ''; msg.className = 'lgok'; msg.textContent = 'Password berhasil diubah dan sudah diperbarui di Firebase.'; toast('Password diubah', 'Gunakan password baru saat masuk berikutnya.', 'ok'); }
     catch (ex) { msg.textContent = ex.message; }
@@ -2446,12 +2527,13 @@ function restoreJson() {
 
 /* ---------- Mulai ---------- */
 async function startApp() {
+  Store.readOnly = Store.mode === 'cloud' && Cloud.role() === 'viewer';
   S.db = normalizeDB(await Store.load());
   S.buyerId = S.db.buyers[0]?.id || null;
   const t = todayISO(), ents = S.db.entries.filter(e => e.buyerId === S.buyerId).map(e => e.date).sort();
   S.ym = ents.length ? ymOf(ents[ents.length - 1]) : ymOf(t);
   render();
-  if (Store.needInit && Store.mode === 'cloud') { Store.needInit = false; save(); toast('Cloud masih kosong', 'Pulihkan file cadangan di Pengaturan untuk mengisinya.'); }
+  if (Store.needInit && Store.mode === 'cloud' && !Store.readOnly) { Store.needInit = false; save(); toast('Cloud masih kosong', 'Pulihkan file cadangan di Pengaturan untuk mengisinya.'); }
   if (Store.mode === 'folder' && Store.dir && !Store.dirOk) toast('Klik "Aktifkan folder" di kiri bawah', 'Agar data & laporan tersimpan di folder invoice.');
 }
 async function boot() {
