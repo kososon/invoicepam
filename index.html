@@ -1070,6 +1070,7 @@ function runs(pts) {
   return d;
 }
 const topRound = (x, y, w, h, r) => { r = Math.min(r, w / 2, h); return `M${x.toFixed(1)} ${(y + h).toFixed(1)}V${(y + r).toFixed(1)}Q${x.toFixed(1)} ${y.toFixed(1)} ${(x + r).toFixed(1)} ${y.toFixed(1)}H${(x + w - r).toFixed(1)}Q${(x + w).toFixed(1)} ${y.toFixed(1)} ${(x + w).toFixed(1)} ${(y + r).toFixed(1)}V${(y + h).toFixed(1)}Z`; };
+const PREV_TXT = '#a86a00';
 function dashChartSvg(m, o = {}) {
   const W = 1000, H = o.h || 410, L = 64, R = 16, bandH = 70, axisH = 26, f = m.f;
   const showPrev = f.last, showBud = f.bud && m.hasBud;
@@ -1081,7 +1082,7 @@ function dashChartSvg(m, o = {}) {
   if (showBud) items.push({ t: `Budget ${f.year}`, c: DC.bud, k: 'dash' });
   let lx = L, row = 0;
   items.forEach(it => { const w = (it.k === 'bar' ? 18 : it.k === 'text' ? 0 : 25) + it.t.length * 6.6 + 16; if (lx + w > W - R && lx > L) { lx = L; row++; } it.x = lx; it.row = row; lx += w + 8; });
-  const T = 46 + row * 18, pb = H - bandH - axisH - 8;
+  const T = 60 + row * 18, pb = H - bandH - axisH - 8;
   const selSet = new Set(m.sel), fade = i => selSet.size < 12 && !selSet.has(i);
   const totals = m.cur;
   const sc = niceScale(Math.max(0, ...totals, ...(showPrev ? m.prev : []), ...(showBud ? m.bud : [])));
@@ -1092,7 +1093,16 @@ function dashChartSvg(m, o = {}) {
     s += `<line x1="${L}" x2="${W - R}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="${v === 0 ? '#b9c6bd' : DC.grid}" stroke-width="1"/>`;
     s += `<text x="${L - 8}" y="${(Y(v) + 4).toFixed(1)}" font-size="11" text-anchor="end" fill="${DC.mut}">${fmt(v, dec)}</text>`;
   }
-  s += `<text x="${L - 8}" y="${T - 16}" font-size="11" font-weight="700" text-anchor="end" fill="${DC.mut}">Ton</text>`;
+  s += `<text x="${L - 8}" y="17" font-size="11" font-weight="700" text-anchor="end" fill="${DC.mut}">Ton</text>`;
+  // angka per bulan: tahun ini & tahun lalu, sejajar di atas garis skala teratas
+  const yr1 = T - 29, yr2 = T - 16;
+  s += `<text x="${L - 8}" y="${yr1 + 4}" font-size="11" font-weight="800" text-anchor="end" fill="${DC.ink}">${f.year}</text>`;
+  if (showPrev) s += `<text x="${L - 8}" y="${yr2 + 4}" font-size="11" font-weight="800" text-anchor="end" fill="${PREV_TXT}">${f.year - 1}</text>`;
+  for (let i = 0; i < 12; i++) {
+    const op = fade(i) ? 0.45 : 1;
+    if (m.cur[i] > 0) s += `<text x="${X(i).toFixed(1)}" y="${yr1 + 4}" font-size="11" font-weight="800" text-anchor="middle" fill="${DC.ink}" opacity="${op}">${fmt(m.cur[i], 2)}</text>`;
+    if (showPrev && m.prev[i] > 0) s += `<text x="${X(i).toFixed(1)}" y="${yr2 + 4}" font-size="11" font-weight="700" text-anchor="middle" fill="${PREV_TXT}" opacity="${op}">${fmt(m.prev[i], 2)}</text>`;
+  }
   const bw = Math.min(50, cw * 0.56);
   for (let i = 0; i < 12; i++) {
     if (!(totals[i] > 0)) continue;
@@ -1101,7 +1111,6 @@ function dashChartSvg(m, o = {}) {
     live.forEach((p, k) => {
       const v = p.vals[i], y1 = Y(cum + v), y0 = Y(cum), h = y0 - y1, last = k === live.length - 1;
       s += last ? `<path d="${topRound(X(i) - bw / 2, y1, bw, h, 4)}" fill="${p.color}" opacity="${op}"/>` : `<rect x="${(X(i) - bw / 2).toFixed(1)}" y="${y1.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${p.color}" opacity="${op}"/>`;
-      if (m.stacked && h >= 15) s += `<text x="${X(i).toFixed(1)}" y="${(y1 + h / 2 + 3.5).toFixed(1)}" font-size="9.5" font-weight="700" text-anchor="middle" fill="#fff" opacity="${op}">${fmt(v, 2)}</text>`;
       if (k < live.length - 1) s += `<line x1="${(X(i) - bw / 2).toFixed(1)}" x2="${(X(i) + bw / 2).toFixed(1)}" y1="${y1.toFixed(1)}" y2="${y1.toFixed(1)}" stroke="#fff" stroke-width="1.2" opacity="${op}"/>`;
       cum += v;
     });
@@ -1114,7 +1123,6 @@ function dashChartSvg(m, o = {}) {
     s += `<path d="${runs(m.bud.map((v, i) => (v > 0 ? [X(i), Y(v)] : null)))}" fill="none" stroke="${DC.bud}" stroke-width="2.4" stroke-dasharray="7 5" stroke-linejoin="round"/>`;
     m.bud.forEach((v, i) => { if (v > 0) s += `<rect x="${(X(i) - 3.5).toFixed(1)}" y="${(Y(v) - 3.5).toFixed(1)}" width="7" height="7" fill="${DC.bud}" transform="rotate(45 ${X(i).toFixed(1)} ${Y(v).toFixed(1)})"/>`; });
   }
-  totals.forEach((v, i) => { if (v > 0) s += `<text x="${X(i).toFixed(1)}" y="${(Y(v) - 7).toFixed(1)}" font-size="10.5" font-weight="700" text-anchor="middle" fill="${DC.ink}" opacity="${fade(i) ? 0.5 : 1}">${fmt(v, 2)}</text>`; });
   MON3.forEach((n, i) => { const on = selSet.has(i) && selSet.size < 12; s += `<text x="${X(i).toFixed(1)}" y="${pb + 18}" font-size="12" text-anchor="middle" fill="${on ? DC.cur : DC.mut}" font-weight="${on ? 800 : 600}">${n}</text>`; });
   items.forEach(it => {
     const ly = 16 + it.row * 18;
