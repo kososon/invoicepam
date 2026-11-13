@@ -288,7 +288,7 @@ tr.ytot td{font-weight:800;border-top:1px solid var(--line);background:#f3f7f4}
 .toast .tact{all:unset;cursor:pointer;display:inline-block;margin-top:8px;padding:6px 12px;border-radius:8px;background:#fff;color:#0f4d2e;font-weight:700}
 @media(max-width:860px){.toast .tact{min-height:36px;display:inline-flex;align-items:center}}
 
-@media(min-width:1000px){.stats.s5{grid-template-columns:repeat(5,minmax(0,1fr))}.stats.s5 .stat b{font-size:18px}}
+@media(min-width:1000px){.stats.s5{grid-template-columns:repeat(5,minmax(0,1fr))}.stats.s5 .stat b{font-size:18px}.stats.s6{grid-template-columns:repeat(3,minmax(0,1fr))}}
 
 .grid2.one{grid-template-columns:minmax(0,1fr)}
 .t tfoot td:first-child{white-space:nowrap}
@@ -1027,6 +1027,23 @@ function tonByBuyer(db, year, ids) {
   for (const e of db.entries) if (e.weight > 0 && o[e.buyerId] && +e.date.slice(0, 4) === year) o[e.buyerId][+e.date.slice(5, 7) - 1] += e.weight / 1000;
   return o;
 }
+/* Revenue = DPP tiap invoice (pembeli x bulan), dijumlahkan per bulan. Satuan: Rupiah */
+function revByBuyer(db, year, ids) {
+  const o = {}; ids.forEach(id => { o[id] = Array(12).fill(0); });
+  const g = new Map();
+  for (const e of db.entries) {
+    if (!o[e.buyerId] || +String(e.date).slice(0, 4) !== year) continue;
+    const k = e.buyerId + '|' + e.date.slice(5, 7);
+    if (!g.has(k)) g.set(k, []);
+    g.get(k).push(e);
+  }
+  for (const [k, ents] of g) {
+    const [id, mm] = k.split('|'), b = db.buyers.find(x => x.id === id);
+    o[id][+mm - 1] = calcTotals(buildRows(ents), b).dpp;
+  }
+  return o;
+}
+const fJt = v => fmt(v / 1e6, 2);
 const addArr = arrs => Array.from({ length: 12 }, (_, i) => arrs.reduce((s, a) => s + a[i], 0));
 function tonDaily(db, ym, ids) {
   const { y, m } = parseISO(ym + '-01'); const a = Array(daysInMonth(y, m)).fill(0);
@@ -1050,6 +1067,8 @@ function dashModel(db, f) {
   let bs = f.buyers ? db.buyers.filter(b => f.buyers.includes(b.id)) : db.buyers.slice();
   if (!bs.length) bs = db.buyers.slice();
   const ids = bs.map(b => b.id), by = tonByBuyer(db, f.year, ids), byPrev = tonByBuyer(db, f.year - 1, ids), byPrev2 = tonByBuyer(db, f.year - 2, ids);
+  const rv = revByBuyer(db, f.year, ids), rvP = revByBuyer(db, f.year - 1, ids), rvP2 = revByBuyer(db, f.year - 2, ids);
+  const rev = addArr(ids.map(i => rv[i])), revPrev = addArr(ids.map(i => rvP[i])), revPrev2 = addArr(ids.map(i => rvP2[i]));
   const cur = addArr(ids.map(i => by[i])), prev = addArr(ids.map(i => byPrev[i])), prev2 = addArr(ids.map(i => byPrev2[i])), bud = budgetOf(db, f.year);
   const hasBud = bs.length === db.buyers.length && bud.some(v => v > 0);
   const lm = lastMonthCount(f.year);
@@ -1062,7 +1081,8 @@ function dashModel(db, f) {
   const nData = idx.filter(i => cur[i] > 0).length, tCur = sumIdx(cur, idx);
   const all12 = Array.from({ length: 12 }, (_, i) => i), yCur = sumIdx(cur, all12), yPrev = sumIdx(prev, all12), yBud = sumIdx(bud, all12), nYear = cur.filter(v => v > 0).length;
   const parts = bs.map(b => ({ b, color: buyerColor(db, b.id), vals: by[b.id] }));
-  return { prev2, luasP, luasP2, tPrev2: tPrev2X, yPrev2: sumIdx(prev2, all12),
+  return { rev, revPrev, revPrev2, rvBy: rv, tRev: sumIdx(rev, idx), tRevPrev: sumIdx(revPrev, idx), tRevPrev2: sumIdx(revPrev2, idx),
+    yRev: sumIdx(rev, all12), yRevPrev: sumIdx(revPrev, all12), yRevPrev2: sumIdx(revPrev2, all12), prev2, luasP, luasP2, tPrev2: tPrev2X, yPrev2: sumIdx(prev2, all12),
     prevProd: luasP > 0 && nPrev > 0 ? tPrevX / luasP / nPrev : null, prev2Prod: luasP2 > 0 && nPrev2 > 0 ? tPrev2X / luasP2 / nPrev2 : null,
     budProd: hasBud && luas > 0 && idx.length ? tBudX / luas / idx.length : null, nIdx: idx.length,
     yCur, yPrev, yBud, yProd: luas > 0 && nYear > 0 ? yCur / luas / nYear : null, f, bs, ids, parts, stacked: parts.length > 1, cur, prev, bud, hasBud, sel, idx, lm, luas, nData,
@@ -1238,13 +1258,15 @@ function viewDashboard() {
     h('div', { class: 'stat' }, h('small', {}, `Tahun lalu · ${f.year - 1}`), h('b', {}, fmt(m.tPrev, 2) + ' Ton'), h('small', {}, 'Selisih ', growthChip(m.tCur, m.tPrev)), prodLine(m.prevProd, m.luasP)),
   ];
   if (f.last2) cards.push(h('div', { class: 'stat' }, h('small', {}, `2 tahun lalu · ${f.year - 2}`), h('b', {}, fmt(m.tPrev2, 2) + ' Ton'), h('small', {}, 'Selisih ', growthChip(m.tCur, m.tPrev2)), prodLine(m.prev2Prod, m.luasP2)));
+  cards.splice(1, 0, h('div', { class: 'stat' }, h('small', {}, 'Total revenue (DPP) · ' + m.scope), h('b', {}, 'Rp ' + fmt(m.tRev, 0)),
+    h('small', {}, `Setahun ${f.year}: Rp ${fmt(m.yRev, 0)}`), h('small', { style: 'display:block;margin-top:2px' }, `≈ ${fJt(m.tRev)} Jt · selisih ${f.year - 1} `, growthChip(m.tRev, m.tRevPrev))));
   cards.push(
     h('div', { class: 'stat' }, h('small', {}, 'Budget · ' + m.scope), h('b', {}, m.hasBud ? fmt(m.tBud, 2) + ' Ton' : '-'),
       h('small', {}, m.hasBud ? `Pencapaian ${fpct(pctOf(m.tCur, m.tBud))} · target setahun ${fmt(m.bYear, 2)}` : m.bs.length < db.buyers.length ? 'Budget berlaku untuk semua pembeli' : 'Belum ada budget (menu Budget)'),
       m.hasBud ? h('small', { style: 'display:block;margin-top:2px' }, m.budProd != null ? `Target ${fmt(m.budProd, 2)} Ton/Ha/bln (${m.nIdx} bln)` : 'isi luas kebun untuk target Ton/Ha') : null),
     h('div', { class: 'stat' }, h('small', {}, 'Produktivitas rata-rata per bulan'), h('b', {}, m.prodAvg == null ? '-' : fmt(m.prodAvg, 2) + ' Ton/Ha'),
       h('small', {}, m.luas > 0 ? `${m.nData} bulan berisi data · total ${fmt(m.prodTotal, 2)} Ton/Ha · kebun ${fmt(m.luas, 2)} Ha` : 'Isi luas kebun di Pengaturan')));
-  w.append(h('div', { class: 'stats' + (cards.length > 4 ? ' s5' : '') }, cards));
+  w.append(h('div', { class: 'stats' + (cards.length > 5 ? ' s6' : ' s5') }, cards));
 
   const wrap = h('div', { class: 'chartwrap', html: dashChartSvg(m) }), tip = h('div', { class: 'tip' }); wrap.append(tip);
   const showPrev = f.last, showPrev2 = f.last2, showBud = f.bud && m.hasBud;
@@ -1257,7 +1279,10 @@ function viewDashboard() {
       + (showPrev ? `<div>${dot(DC.prev)}Tahun ${f.year - 1}<span>${fmt(m.prev[i], 2)} Ton</span></div>` : '')
       + (showPrev2 ? `<div>${dot(DC.prev2)}Tahun ${f.year - 2}<span>${fmt(m.prev2[i], 2)} Ton</span></div>` : '')
       + (showBud ? `<div>${dot(DC.bud)}Budget<span>${fmt(m.bud[i], 2)} Ton</span></div><div class="mu">Pencapaian<span>${fpct(pctOf(m.cur[i], m.bud[i]))}</span></div>` : '')
-      + (m.luas > 0 ? `<div class="mu">Ton / Ha<span>${fmt(m.cur[i] / m.luas, 2)}</span></div>` : '');
+      + (m.luas > 0 ? `<div class="mu">Ton / Ha<span>${fmt(m.cur[i] / m.luas, 2)}</span></div>` : '')
+      + `<div class="mu">Revenue ${f.year} (DPP)<span>Rp ${fJt(m.rev[i])} Jt</span></div>`
+      + (showPrev ? `<div>Revenue ${f.year - 1}<span>Rp ${fJt(m.revPrev[i])} Jt</span></div>` : '')
+      + (showPrev2 ? `<div>Revenue ${f.year - 2}<span>Rp ${fJt(m.revPrev2[i])} Jt</span></div>` : '');
     tip.style.display = 'block';
     const x = e.clientX - r.left, flip = x > r.width * 0.6;
     tip.style.left = (flip ? x - tip.offsetWidth - 14 : x + 14) + 'px'; tip.style.top = Math.max(6, e.clientY - r.top - 20) + 'px';
@@ -1268,17 +1293,17 @@ function viewDashboard() {
 
   const selSet = new Set(m.idx), all = a => a.reduce((x, y) => x + y, 0);
   const c2 = !!f.last2, z = v => (v > 0 ? fmt(v, 2) : '-');
-  const heads = ['Bulan', `${f.year} (Ton)`, `${f.year - 1} (Ton)`, ...(c2 ? [`${f.year - 2} (Ton)`] : []), 'Budget (Ton)', 'Capai', 'Ton/Ha'];
+  const heads = ['Bulan', `${f.year} (Ton)`, `${f.year - 1} (Ton)`, ...(c2 ? [`${f.year - 2} (Ton)`] : []), 'Budget (Ton)', 'Capai', 'Ton/Ha', `Revenue ${f.year} (Rp)`];
   const rowsT = MONTHS.map((n, i) => h('tr', { class: selSet.has(i) ? '' : 'dim' }, h('td', {}, n), h('td', { class: 'r' }, z(m.cur[i])), h('td', { class: 'r' }, z(m.prev[i])), c2 ? h('td', { class: 'r' }, z(m.prev2[i])) : null,
-    h('td', { class: 'r' }, m.hasBud ? z(m.bud[i]) : '-'), h('td', { class: 'r' }, m.hasBud && i < m.lm ? fpct(pctOf(m.cur[i], m.bud[i])) : '-'), h('td', { class: 'r' }, m.luas > 0 && m.cur[i] > 0 ? fmt(m.cur[i] / m.luas, 2) : '-')));
-  const totRow = (label, cls, a, p, p2, b, cap, prod) => h('tr', { class: cls }, h('td', {}, label), h('td', { class: 'r' }, fmt(a, 2)), h('td', { class: 'r' }, fmt(p, 2)), c2 ? h('td', { class: 'r' }, fmt(p2, 2)) : null, h('td', { class: 'r' }, m.hasBud ? fmt(b, 2) : '-'), h('td', { class: 'r' }, m.hasBud ? fpct(cap) : '-'), h('td', { class: 'r' }, prod != null ? fmt(prod, 2) : '-'));
+    h('td', { class: 'r' }, m.hasBud ? z(m.bud[i]) : '-'), h('td', { class: 'r' }, m.hasBud && i < m.lm ? fpct(pctOf(m.cur[i], m.bud[i])) : '-'), h('td', { class: 'r' }, m.luas > 0 && m.cur[i] > 0 ? fmt(m.cur[i] / m.luas, 2) : '-'), h('td', { class: 'r' }, m.rev[i] > 0 ? fmt(m.rev[i], 0) : '-')));
+  const totRow = (label, cls, a, p, p2, b, cap, prod, rv) => h('tr', { class: cls }, h('td', {}, label), h('td', { class: 'r' }, fmt(a, 2)), h('td', { class: 'r' }, fmt(p, 2)), c2 ? h('td', { class: 'r' }, fmt(p2, 2)) : null, h('td', { class: 'r' }, m.hasBud ? fmt(b, 2) : '-'), h('td', { class: 'r' }, m.hasBud ? fpct(cap) : '-'), h('td', { class: 'r' }, prod != null ? fmt(prod, 2) : '-'), h('td', { class: 'r' }, fmt(rv, 0)));
   const tbl = h('table', { class: 't' }, h('thead', {}, h('tr', {}, heads.map((x, i) => h('th', { class: i ? 'r' : '' }, x)))), h('tbody', {}, rowsT),
-    h('tfoot', {}, totRow('Total s.d. bulan terpilih', '', m.tCur, m.tPrev, m.tPrev2, m.tBud, pctOf(m.tCur, m.tBud), m.prodAvg),
-      totRow('Total 1 tahun', 'ytot', m.yCur, m.yPrev, m.yPrev2, m.yBud, pctOf(m.yCur, m.yBud), m.yProd)));
+    h('tfoot', {}, totRow('Total s.d. bulan terpilih', '', m.tCur, m.tPrev, m.tPrev2, m.tBud, pctOf(m.tCur, m.tBud), m.prodAvg, m.tRev),
+      totRow('Total 1 tahun', 'ytot', m.yCur, m.yPrev, m.yPrev2, m.yBud, pctOf(m.yCur, m.yBud), m.yProd, m.yRev)));
   const shares = m.parts.map(p => ({ ...p, ton: sumIdx(p.vals, m.idx) })).sort((x, y) => y.ton - x.ton), totS = all(shares.map(x => x.ton)), maxS = Math.max(0, ...shares.map(x => x.ton));
   const comp = shares.length ? h('div', { class: 'comp' }, shares.map(x => h('div', { class: 'cr' }, h('div', { class: 'cn' }, h('i', { class: 'cdot', style: `background:${x.color}` }), `${x.b.kode || ''} · ${x.b.nama}`), h('div', { class: 'cb' }, h('i', { style: `width:${maxS > 0 ? (x.ton / maxS) * 100 : 0}%;background:${x.color}` })), h('div', { class: 'cv' }, fmt(x.ton, 2) + ' Ton', h('small', {}, fpct(pctOf(x.ton, totS))))))) : h('div', { class: 'empty' }, 'Belum ada pembeli.');
-  w.append(h('div', { class: 'grid2' + (c2 ? ' one' : '') }, h('div', { class: 'card' }, h('h2', {}, 'Rekap bulanan', h('span', { class: 'hint' }, m.scope)), h('div', { style: 'overflow:auto' }, tbl),
-    h('small', { style: 'display:block;margin-top:8px;color:var(--muted)' }, 'Baris pertama (YTD) hanya menghitung bulan terpilih s.d. bulan berjalan; "Total 1 tahun" menjumlahkan Januari–Desember (Capai = total tahun berjalan terhadap budget 1 tahun penuh). Ton/Ha pada Total = rata-rata per bulan yang berisi data.')),
+  w.append(h('div', { class: 'grid2 one' }, h('div', { class: 'card' }, h('h2', {}, 'Rekap bulanan', h('span', { class: 'hint' }, m.scope)), h('div', { style: 'overflow:auto' }, tbl),
+    h('small', { style: 'display:block;margin-top:8px;color:var(--muted)' }, 'Baris pertama (YTD) hanya menghitung bulan terpilih s.d. bulan berjalan; "Total 1 tahun" menjumlahkan Januari–Desember (Capai = total tahun berjalan terhadap budget 1 tahun penuh). Ton/Ha pada Total = rata-rata per bulan yang berisi data. Revenue = DPP (total × 11/12) dari setiap invoice per bulan, dijumlahkan.')),
     h('div', { class: 'card' }, h('h2', {}, 'Komposisi pembeli', h('span', { class: 'hint' }, m.scope)), comp)));
   if (m.sel.length === 1) {
     const ym = `${f.year}-${pad(m.sel[0] + 1)}`;
@@ -1369,6 +1394,7 @@ async function dashboardPdf(db, f) {
     ['Total tonase', fmt(m.tCur, 2) + ' Ton', m.buyerName + (m.prodAvg != null ? '  |  ' + fmt(m.prodAvg, 2) + ' Ton/Ha/bln' : '')],
     [`Tahun lalu (${f.year - 1})`, fmt(m.tPrev, 2) + ' Ton', sel(gp) + '  |  ' + pl(m.prevProd, m.luasP)],
   ];
+  kp.splice(1, 0, ['Total revenue (DPP)', 'Rp ' + fmt(m.tRev, 0), `Setahun ${f.year}: Rp ${fmt(m.yRev, 0)}`]);
   if (f.last2) kp.push([`2 tahun lalu (${f.year - 2})`, fmt(m.tPrev2, 2) + ' Ton', sel(gp2) + '  |  ' + pl(m.prev2Prod, m.luasP2)]);
   kp.push(['Budget', m.hasBud ? fmt(m.tBud, 2) + ' Ton' : '-', m.hasBud ? `Capai ${fpct(pctOf(m.tCur, m.tBud))}` + (m.budProd != null ? `  |  Target ${fmt(m.budProd, 2)} Ton/Ha/bln` : '') : 'belum ada / khusus semua pembeli'],
     ['Produktivitas rata-rata per bulan', m.prodAvg == null ? '-' : fmt(m.prodAvg, 2) + ' Ton/Ha', m.luas > 0 ? `${m.nData} bulan berisi data | kebun ${fmt(m.luas, 2)} Ha` : 'luas kebun belum diisi']);
@@ -1383,25 +1409,25 @@ async function dashboardPdf(db, f) {
   });
 
   // grafik (kiri)
-  const c2 = !!f.last2, cwid = c2 ? 168 : 184, chh = cwid * 0.56;
+  const c2 = !!f.last2, cwid = c2 ? 156 : 170, chh = cwid * 0.56;
   pg.image(await pdf.embedPng(await svgToPng(dashChartSvg(m, { export: true, h: 560 }), 1000, 560)), M, 50, cwid, chh);
 
   // tabel bulanan ringkas (kanan)
-  const tx = M + cwid + 5, cols = c2 ? [['Bulan', 11, 'l'], [String(f.year), 15, 'r'], [String(f.year - 1), 15, 'r'], [String(f.year - 2), 15, 'r'], ['Budget', 14, 'r'], ['Capai', 12.5, 'r'], ['Ton/Ha', 11, 'r']]
-    : [['Bulan', 13, 'l'], [String(f.year), 17, 'r'], [String(f.year - 1), 17, 'r'], ['Budget', 15, 'r'], ['Capai', 12.5, 'r'], ['Ton/Ha', 11.5, 'r']];
-  const sp = (arr, p2) => (c2 ? [arr[0], arr[1], arr[2], p2, arr[3], arr[4], arr[5]] : arr);
+  const tx = M + cwid + 5, cols = c2 ? [['Bulan', 10.5, 'l'], [String(f.year), 14, 'r'], [String(f.year - 1), 14, 'r'], [String(f.year - 2), 14, 'r'], ['Budget', 13, 'r'], ['Capai', 11.5, 'r'], ['Ton/Ha', 10.5, 'r'], ['Rev (Jt)', 19, 'r']]
+    : [['Bulan', 11, 'l'], [String(f.year), 15, 'r'], [String(f.year - 1), 15, 'r'], ['Budget', 13.5, 'r'], ['Capai', 11.5, 'r'], ['Ton/Ha', 10.5, 'r'], ['Rev (Jt)', 19, 'r']];
+  const sp = (arr, p2) => (c2 ? [arr[0], arr[1], arr[2], p2, arr[3], arr[4], arr[5], arr[6]] : arr);
   const tw = cols.reduce((a, c) => a + c[1], 0), rh = 5.2, selSet = new Set(m.idx); let y = 50, x = tx;
   pg.fill(tx, y, tw, rh, hex('#e8efe9'));
   cols.forEach(([t, w2, al]) => { pg.text(t, al === 'r' ? x + w2 - 1.2 : x + 1.2, y + 3.7, { font: fn.b, size: 7.2, align: al === 'r' ? 'r' : 'l' }); x += w2; });
   y += rh;
   const row = (arr, bold, dim) => { x = tx; arr.forEach((t, i) => { const [, w2, al] = cols[i]; pg.text(t, al === 'r' ? x + w2 - 1.2 : x + 1.2, y + 3.7, { font: bold ? fn.b : fn.r, size: 7.2, align: al === 'r' ? 'r' : 'l', color: dim ? [0.62, 0.66, 0.64] : null }); x += w2; }); pg.line(tx, y + rh, tx + tw, y + rh, bold ? 0.7 : 0.2); y += rh; };
-  MONTHS.forEach((n, i) => row(sp([MON3[i], m.cur[i] > 0 ? fmt(m.cur[i], 2) : '-', m.prev[i] > 0 ? fmt(m.prev[i], 2) : '-', m.hasBud && m.bud[i] > 0 ? fmt(m.bud[i], 2) : '-', m.hasBud && i < m.lm ? fpct(pctOf(m.cur[i], m.bud[i])) : '-', m.luas > 0 && m.cur[i] > 0 ? fmt(m.cur[i] / m.luas, 2) : '-'], m.prev2[i] > 0 ? fmt(m.prev2[i], 2) : '-'), false, !selSet.has(i)));
+  MONTHS.forEach((n, i) => row(sp([MON3[i], m.cur[i] > 0 ? fmt(m.cur[i], 2) : '-', m.prev[i] > 0 ? fmt(m.prev[i], 2) : '-', m.hasBud && m.bud[i] > 0 ? fmt(m.bud[i], 2) : '-', m.hasBud && i < m.lm ? fpct(pctOf(m.cur[i], m.bud[i])) : '-', m.luas > 0 && m.cur[i] > 0 ? fmt(m.cur[i] / m.luas, 2) : '-', m.rev[i] > 0 ? fJt(m.rev[i]) : '-'], m.prev2[i] > 0 ? fmt(m.prev2[i], 2) : '-'), false, !selSet.has(i)));
   pg.line(tx, y, tx + tw, y, 0.8);
-  row(sp(['YTD', fmt(m.tCur, 2), fmt(m.tPrev, 2), m.hasBud ? fmt(m.tBud, 2) : '-', m.hasBud ? fpct(pctOf(m.tCur, m.tBud)) : '-', m.prodAvg != null ? fmt(m.prodAvg, 2) : '-'], fmt(m.tPrev2, 2)), true);
-  row(sp(['1 Thn', fmt(m.yCur, 2), fmt(m.yPrev, 2), m.hasBud ? fmt(m.yBud, 2) : '-', m.hasBud ? fpct(pctOf(m.yCur, m.yBud)) : '-', m.yProd != null ? fmt(m.yProd, 2) : '-'], fmt(m.yPrev2, 2)), true);
+  row(sp(['YTD', fmt(m.tCur, 2), fmt(m.tPrev, 2), m.hasBud ? fmt(m.tBud, 2) : '-', m.hasBud ? fpct(pctOf(m.tCur, m.tBud)) : '-', m.prodAvg != null ? fmt(m.prodAvg, 2) : '-', fJt(m.tRev)], fmt(m.tPrev2, 2)), true);
+  row(sp(['1 Thn', fmt(m.yCur, 2), fmt(m.yPrev, 2), m.hasBud ? fmt(m.yBud, 2) : '-', m.hasBud ? fpct(pctOf(m.yCur, m.yBud)) : '-', m.yProd != null ? fmt(m.yProd, 2) : '-', fJt(m.yRev)], fmt(m.yPrev2, 2)), true);
   // catatan (kanan bawah)
   let ny = y + 5;
-  const notes = ['YTD = bulan terpilih (s.d. bulan berjalan); 1 Thn = total Januari-Desember (Capai terhadap budget 1 tahun).', 'Ton/Ha pada Total = rata-rata per bulan yang berisi data (total Ton/Ha dibagi jumlah bulan berisi data).', 'Garis kuning = tahun lalu' + (c2 ? '; garis abu putus-putus = 2 tahun lalu' : '') + '; garis putus biru = budget (hanya bila semua pembeli dipilih).', m.stacked ? 'Warna batang = porsi tiap pembeli.' : null].filter(Boolean);
+  const notes = ['YTD = bulan terpilih (s.d. bulan berjalan); 1 Thn = total Januari-Desember (Capai terhadap budget 1 tahun).', 'Ton/Ha pada Total = rata-rata per bulan yang berisi data (total Ton/Ha dibagi jumlah bulan berisi data).', 'Revenue = DPP (total x 11/12) tiap invoice per bulan, dalam jutaan Rupiah.', 'Garis kuning = tahun lalu' + (c2 ? '; garis abu putus-putus = 2 tahun lalu' : '') + '; garis putus biru = budget (hanya bila semua pembeli dipilih).', m.stacked ? 'Warna batang = porsi tiap pembeli.' : null].filter(Boolean);
   notes.forEach(t => wrapText(fn.i, 7.2, t, tw).forEach(l => { pg.text(l, tx, ny, { font: fn.i, size: 7.2, color: mut }); ny += 3.6; }));
 
   // komposisi pembeli (kiri bawah, 2 kolom)
